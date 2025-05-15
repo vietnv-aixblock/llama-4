@@ -12,7 +12,7 @@ HfFolder.save_token(hf_token)
 from huggingface_hub import login
 
 login(token=hf_token)
-model_id = "meta-llama/Llama-Guard-4-12B"
+model_id = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 
 
 def load():
