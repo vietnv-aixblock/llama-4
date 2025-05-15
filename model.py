@@ -674,7 +674,7 @@ class MyModel(AIxBlockMLBase):
     def model(self, **kwargs):
         global model_demo, tokenizer_demo, model_loaded_demo, model_id_demo
 
-        model_id_demo = kwargs.get("model_id", "meta-llama/Llama-Guard-4-12Bs")
+        model_id_demo = kwargs.get("model_id", "meta-llama/Llama-Guard-4-12B")
         project_id = kwargs.get("project_id", 0)
 
         print(
@@ -691,7 +691,7 @@ class MyModel(AIxBlockMLBase):
         MAX_INPUT_TOKEN_LENGTH = int(os.getenv("MAX_INPUT_TOKEN_LENGTH", "4096"))
 
         DESCRIPTION = """\
-        # Gemma-3
+        # Gemma-4
         """
 
         if not torch.cuda.is_available():
