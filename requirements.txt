@@ -25,7 +25,7 @@ huggingface_hub
 accelerate>=0.31.0
 prometheus-client
 aixblock-ml
-aixblock-sdk
+aixblock-sdk==0.0.5
 aixblock-tools
 tensorboardX
 # ==1.9
@@ -82,3 +82,12 @@ rich
 # vllm
 # auto-round
 # # intel_extension_for_pytorch==2.5.0
+huggingface_hub[hf_xet]
+apscheduler
+fastapi
+uvicorn
+mcp
+torch==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
+torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+spaces

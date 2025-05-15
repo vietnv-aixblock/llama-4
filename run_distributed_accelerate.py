@@ -1,181 +1,113 @@
-import json
 import argparse
-import inspect
-from logging_class import start_queue, write_log, stop_log
+from ast import arg
+import json
+import os
 
+# import subprocess
 import torch
-from torch.utils.data.dataloader import DataLoader
-from accelerate import Accelerator, notebook_launcher
-from accelerate.utils import gather_object
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, TrainingArguments, TrainerCallback, \
-    DataCollatorWithPadding  # BitsAndBytesConfig,AutoConfig,
-# from diffusers import DiffusionPipeline
-
-from datasets import load_dataset
-from trl import SFTTrainer
 import wandb
+from datasets import load_dataset
+from huggingface_hub.hf_api import HfFolder
+from loguru import logger
+from peft import LoraConfig
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainingArguments,
+)
+from trl import SFTTrainer
 
+from logging_class import start_queue, write_log
 
-def run_inference(args):
-    if args.predict_args:
-        with open(args.predict_args, 'r') as f:
-            predict_args = json.load(f)
-    else:
-        predict_args = {}
-    if "prompt" in predict_args:
-        prompt = int(predict_args["prompt"])
+# ---------------------------------------------------------------------------
+HfFolder.save_token("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")
+wandb.login("allow", "cd65e4ccbe4a97f6b8358f78f8ecf054f21466d9")
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+parser = argparse.ArgumentParser(description="AIxBlock")
+parser.add_argument(
+    "--training_args_json",
+    type=str,
+    default=None,
+    help="JSON string for training arguments",
+)
+parser.add_argument("--dataset_local", type=str, default=None, help="dataset id")
+parser.add_argument("--channel_log", type=str, default=None, help="channel_log")
+parser.add_argument("--hf_model_id", type=str, default=None, help="hf_model_id")
+parser.add_argument("--push_to_hub", type=str, default=None, help="push_to_hub")
+parser.add_argument(
+    "--push_to_hub_token", type=str, default=None, help="push_to_hub_token"
+)
+parser.add_argument("--model_id", type=str, default=None, help="model_id")
+parser.add_argument(
+    "--dataset_id",
+    type=str,
+    default="autoprogrammer/Qwen2.5-Coder-7B-Instruct-codeguardplus",
+    help="Name of the dataset to use",
+)
+parser.add_argument(
+    "--instruction_field",
+    type=str,
+    default="prompt",
+    help="Field name for prompts in the dataset",
+)
+parser.add_argument(
+    "--input_field",
+    type=str,
+    default="task_description",
+    help="Field name for text in the dataset",
+)
+parser.add_argument(
+    "--output_field",
+    type=str,
+    default="response",
+    help="Field name for text in the dataset",
+)
+args = parser.parse_args()
+log_queue, logging_thread = start_queue(args.channel_log)
+write_log(log_queue)
+dataset_local = args.dataset_local
+is_use_local = False
+num_train_epochs = 1
+per_train_dataset = 0.8
+per_test_dataset = 0.2
+output_dir = "./data/checkpoint"
 
-    if "text" in predict_args:
-        text = int(predict_args["text"])
+# push_to_hub = True if args.push_to_hub and args.push_to_hub == "True" else False
+push_to_hub = True
+hf_model_id = args.hf_model_id if args.hf_model_id else "aixblock"
+push_to_hub_token = (
+    args.push_to_hub_token
+    if args.push_to_hub_token
+    else "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"
+)
+print("Giá trị =============== ", push_to_hub_token)
+# push_to_hub_token = "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"
 
-    # https://www.penguin.co.uk/articles/2022/04/best-first-lines-in-books
-    prompts_all = [
-        "The King is dead. Long live the Queen.",
-        "Once there were four children whose names were Peter, Susan, Edmund, and Lucy. This story",
-        "The story so far: in the beginning, the universe was created. This has made a lot of people very angry",
-        "It was a queer, sultry summer, the summer they electrocuted the Rosenbergs, and I didn’t know what",
-        "We were somewhere around Barstow on the edge of the desert when the drugs began to take hold.",
-        "It was a bright cold day in April, and the clocks were striking thirteen.",
-        "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
-        "The snow in the mountains was melting and Bunny had been dead for several weeks before we came to understand the gravity of",
-        "The sweat wis lashing oafay Sick Boy; he wis trembling.",
-        "124 was spiteful. Full of Baby's venom.",
-        "As Gregor Samsa awoke one morning from uneasy dreams he found himself transformed in his bed into a gigantic insect.",
-        "When Mary Lennox was sent to Misselthwaite Manor to live with her uncle everybody said she was",
-        "I write this sitting in the kitchen sink.",
-    ]
-
-    accelerator = Accelerator()
-
-    model_path = args.hf_model_id
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map={"": accelerator.process_index},
-        torch_dtype=torch.bfloat16,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-    with accelerator.split_between_processes(prompts_all) as prompts:
-        outputs = []
-        for prompt in prompts:
-            prompt_tokenized = tokenizer(prompt, return_tensors="pt").to("cuda")
-            output_tokenized = model.generate(**prompt_tokenized, max_new_tokens=args.max_new_tokens)
-            outputs.append(tokenizer.decode(output_tokenized[0]))
-
-    outputs_gathered = gather_object(outputs)
-
-    for output in outputs_gathered:
-        accelerator.print(output)
-
-    with open('outputs.txt', 'w') as file:
-        file.write('\n\n'.join(outputs_gathered))
-
-
-class TrainOnStartCallback(TrainerCallback):
-    def on_train_begin(self, args, state, control, logs=None, **kwargs):
-        # Log training loss at step 0
-        logs = logs or {}
-        self.log(logs)
-
-    def log(self, logs):
-        print(f"Logging at start: {logs}")
-
-
-def is_valid_type(value, expected_type):
-    from typing import get_origin, get_args, Union
-    # Nếu không có type hint (Empty), chấp nhận giá trị
-    if expected_type is inspect._empty:
-        return True
-    # Nếu type hint là generic (Union, Optional, List, etc.)
-    origin = get_origin(expected_type)
-    if origin is Union:  # Xử lý Union hoặc Optional
-        return any(is_valid_type(value, arg) for arg in get_args(expected_type))
-    if origin is list:  # Xử lý List
-        return isinstance(value, list) and all(is_valid_type(v, get_args(expected_type)[0]) for v in value)
-    if origin is dict:  # Xử lý Dict
-        key_type, value_type = get_args(expected_type)
-        return (
-                isinstance(value, dict) and
-                all(is_valid_type(k, key_type) for k in value.keys()) and
-                all(is_valid_type(v, value_type) for v in value.values())
-        )
-    # Kiểm tra kiểu cơ bản (int, float, str, etc.)
-    return isinstance(value, expected_type)
-
-
-def run_predict(args):
-    run_inference(args)
-    notebook_launcher(run_inference, args=(args), num_processes=args.world_size * torch.cuda.device_count())
-
-
-def run_train(args):
-    dataset_local = args.dataset_local
-    is_use_local = False
-    num_train_epochs = 1
-    per_train_dataset = 0.8
-    per_test_dataset = 0.2
-    output_dir = "./data/checkpoint"
-
-    push_to_hub = True if args.push_to_hub and args.push_to_hub == "True" else False
-    hf_model_id = args.hf_model_id if args.hf_model_id else "llama4"
-    push_to_hub_token = args.push_to_hub_token if args.push_to_hub_token else "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"
-
+if args.training_args_json:
+    with open(args.training_args_json, "r") as f:
+        training_args_dict = json.load(f)
+else:
     training_args_dict = {}
-    # Nếu có file JSON, đọc và phân tích nó
-    print(args.training_args_json)
-    if args.training_args_json:
-        with open(args.training_args_json, 'r') as f:
-            training_args_dict = json.load(f)
 
-    wandb.login('allow', "69b9681e7dc41d211e8c93a3ba9a6fb8d781404a")
+if torch.cuda.is_bf16_supported():
+    compute_dtype = torch.bfloat16
+    attn_implementation = "flash_attention_2"
+else:
+    compute_dtype = torch.float16
+    attn_implementation = "sdpa"
+torch.set_grad_enabled(True)
+model_name = args.model_id if args.model_id else "meta-llama/Llama-Guard-4-12B"
 
-    # Hugging Face model id
-    model_id = "facebook/opt-125m"  # default
-    if "model_id" in training_args_dict and training_args_dict["model_id"] != "None":
-        model_id = training_args_dict["model_id"]
-        # "facebook/opt-125m" # or  `appvoid/llama-3-1b` tiiuae/falcon-7b` `mistralai/Mistral-7B-v0.1` `bigscience/bloomz-1b7` `Qwen/Qwen2-1.5B`
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"Using device: {device}")
 
-    dataset_id = "Sujithanumala/Llama_3.2_1B_IT_dataset"
-    if "dataset_id" in training_args_dict:
-        dataset_id = training_args_dict["dataset_id"]  # "Sujithanumala/Llama_3.2_1B_IT_dataset"
-    else:
-        dataset_id = "Sujithanumala/Llama_3.2_1B_IT_dataset"
-
-        if dataset_local and dataset_local != "None":
-            dataset_id = dataset_local
-            is_use_local = True
-
-    if "num_train_epochs" in training_args_dict:
-        num_train_epochs = int(training_args_dict["num_train_epochs"])
-
-    if "per_train_dataset" in training_args_dict:
-        per_train_dataset = int(training_args_dict["per_train_dataset"])
-
-    if "per_test_dataset" in training_args_dict:
-        per_test_dataset = int(training_args_dict["per_test_dataset"])
-
-    if not is_use_local:
-        dataset = load_dataset(dataset_id, split="train")
-        # eval_dataset = train_dataset 
-        train_test_split = dataset.train_test_split(test_size=per_test_dataset, seed=42)  # 20% cho eval
-        train_dataset = train_test_split["train"]
-        eval_dataset = train_test_split["test"]
-    else:
-        # Load dataset từ thư mục local
-        dataset = load_dataset(
-            "json",
-            data_files={
-                "train": f"{dataset_id}/train_data.json",
-                "test": f"{dataset_id}/test_data.json"
-            }
-        )
-
-        # Truy cập từng tập dữ liệu
-        train_dataset = dataset["train"]
-        eval_dataset = dataset["test"]
-
-    alpaca_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
+tokenizer = AutoTokenizer.from_pretrained(
+    model_name, add_eos_token=True, use_fast=True, trust_remote_code=True
+)
+EOS_TOKEN = tokenizer.eos_token  # Must add EOS_TOKEN
+alpaca_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
                     ### Instruction:
                     {}
@@ -186,126 +118,240 @@ def run_train(args):
                     ### Response:
                     {}"""
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        # device_map="auto",
-        low_cpu_mem_usage=True,
-        use_cache=True
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    EOS_TOKEN = tokenizer.eos_token  # Must add EOS_TOKEN
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-    tokenizer.pad_token = tokenizer.eos_token
 
-    def preprocess_function(examples):
-        instructions = examples["instruction"]
-        inputs = examples["input"]
-        outputs = examples["output"]
-        texts = []
-        for instruction, input, output in zip(instructions, inputs, outputs):
-            text = alpaca_prompt.format(instruction, input, output) + EOS_TOKEN
-            texts.append(text)
-        return tokenizer(texts, truncation=True, padding=True, max_length=128, return_tensors="pt")
-
-    tokenized_datasets = train_dataset.map(
-        preprocess_function,
-        batched=True,
-        # remove_columns=train_dataset['train'].column_names,
+def formatting_prompts_func(examples):
+    instructions = examples.get(args.instruction_field)
+    inputs = examples.get(args.input_field)
+    outputs = examples.get(args.output_field)
+    texts = []
+    for instruction, input, output in zip(instructions, inputs, outputs):
+        text = alpaca_prompt.format(instruction, input, output) + EOS_TOKEN
+        texts.append(text)
+    return tokenizer(
+        texts,
+        truncation=True,
+        padding=True,
+        max_length=128,
+        return_tensors="pt",
     )
 
-    data_collator = DataCollatorWithPadding(tokenizer)
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=16, collate_fn=data_collator)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=16, collate_fn=data_collator)
 
-    print("Data is formatted and ready!")
-    print("===========")
+if not training_args_dict:
+    training_args_dict = {}
 
-    training_args = TrainingArguments(
-        output_dir=output_dir,  # directory to save and repository id
-        # logging_dir= '/app/data/logs',
-        learning_rate=2e-4,
-        log_level="debug",
-        per_device_train_batch_size=3,
-        per_device_eval_batch_size=16,
-        num_train_epochs=num_train_epochs,
-        weight_decay=0.01,
-        save_strategy="epoch",
-        # report_to="tensorboard",
-        # report_to="wandb",
-        use_cpu=False,
-        bf16=False,
-        fp16=False,
-        push_to_hub=push_to_hub,
-        push_to_hub_model_id=hf_model_id if push_to_hub else None,
-        push_to_hub_token=push_to_hub_token if push_to_hub else None,
+dataset_id = args.dataset_id
+dataset_id = training_args_dict.get("dataset_id", dataset_id)
+
+
+is_use_local = dataset_local is not None and dataset_local != "None"
+if is_use_local:
+    dataset_id = dataset_local
+
+
+num_train_epochs = int(training_args_dict.get("num_train_epochs", 1))
+per_train_dataset = float(training_args_dict.get("per_train_dataset", 0.8))
+per_test_dataset = float(training_args_dict.get("per_test_dataset", 0.2))
+
+# sfttrainer_args = {}
+
+
+def formatting_func(example):
+    text = f"{example['instruction']} {example['input']} {example['output']}"
+    return {"text": text}
+
+
+if not is_use_local:
+    dataset = load_dataset(dataset_id)
+    # Truy cập từng tập dữ liệu
+    train_test_split = dataset["train"].train_test_split(
+        test_size=per_test_dataset, seed=42
+    )  # 20% cho eval
+    train_dataset = train_test_split["train"]
+    eval_dataset = train_test_split["test"]
+
+    train_dataset = train_dataset.map(
+        formatting_prompts_func, remove_columns=train_dataset.column_names, batched=True
     )
-    print(training_args)
+    eval_dataset = eval_dataset.map(
+        formatting_prompts_func, remove_columns=eval_dataset.column_names, batched=True
+    )
+    sfttrainer_args = {
+        "dataset_text_field": "text",
+    }
 
-    trainer = SFTTrainer(
-        dataset_text_field="text",
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_datasets,
-        # eval_dataset=eval_tokenized_datasets,
-        tokenizer=tokenizer,
-        # data_collator=data_collator,
-        # compute_metrics=compute_metrics,
-        dataset_kwargs={
-            "add_special_tokens": False,  # We template with special tokens
-            "append_concat_token": False,  # No need to add additional separator token
-            'skip_prepare_dataset': True  # skip the dataset preparation
+else:
+    # Load dataset từ thư mục local
+    dataset = load_dataset(
+        "json",
+        data_files={
+            "train": f"{dataset_id}/train_data.json",
+            "test": f"{dataset_id}/test_data.json",
         },
-        callbacks=[TrainOnStartCallback()]
     )
-    # start training, the model will be automatically saved to the hub and the output directory
+
+    # Truy cập từng tập dữ liệu
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["test"]
+
+    train_dataset = train_dataset.map(
+        formatting_prompts_func, remove_columns=train_dataset.column_names, batched=True
+    )
+    eval_dataset = eval_dataset.map(
+        formatting_prompts_func, remove_columns=eval_dataset.column_names, batched=True
+    )
+    sfttrainer_args = {
+        "dataset_text_field": "text",
+    }
+
+# region Model
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=compute_dtype,
+    bnb_4bit_use_double_quant=True,
+)
+
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    trust_remote_code=True,
+    device_map="auto",
+    quantization_config=bnb_config,
+    torch_dtype=compute_dtype,
+)
+
+model.enable_input_require_grads()
+
+# Configure LoRA for Qwen model
+peft_config = LoraConfig(
+    lora_alpha=16,
+    lora_dropout=0.05,
+    r=16,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules="all-linear",
+)
+
+training_arguments = TrainingArguments(
+    output_dir="./data/checkpoint",
+    eval_strategy="steps",
+    do_eval=True,
+    # optim="paged_adamw_8bit",
+    per_device_train_batch_size=1,
+    # gradient_accumulation_steps=4,
+    per_device_eval_batch_size=1,
+    log_level="debug",
+    save_strategy="epoch",
+    logging_steps=10,
+    learning_rate=1e-4,
+    # fp16 = not torch.cuda.is_bf16_supported(),
+    # bf16 = torch.cuda.is_bf16_supported(),
+    eval_steps=30,
+    num_train_epochs=num_train_epochs,
+    warmup_ratio=0.1,
+    lr_scheduler_type="linear",
+    remove_unused_columns=False,
+    report_to="tensorboard",  # azure_ml, comet_ml, mlflow, neptune, tensorboard, wandb, codecarbon, clearml, dagshub, flyte, dvclive
+    push_to_hub=push_to_hub,
+    push_to_hub_model_id=hf_model_id,  # [project-id]-[model-name]-[datetime]
+    push_to_hub_token=push_to_hub_token,
+    no_cuda=False,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    peft_config=peft_config,
+    # data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer),
+    # max_seq_length=512,
+    # tokenizer=tokenizer,
+    args=training_arguments,
+    # dataset_kwargs={
+    #                 "add_special_tokens": False,  # We template with special tokens
+    #                 "append_concat_token": False, # No need to add additional separator token
+    #                 'skip_prepare_dataset': True # skip the dataset preparation
+    #             },
+)
+
+try:
     trainer.train()
-    if push_to_hub:
-        trainer.push_to_hub()
+except RuntimeError as e:
+    if "CUDA out of memory" in str(e):
+        print("⚠️ CUDA OOM detected, switching to CPU...")
 
-    # free the memory again
-    del model
-    del trainer
-    torch.cuda.empty_cache()
+        import gc
 
+        import torch
 
-def parse_args():
-    # Tạo parser cho dòng lệnh
-    parser = argparse.ArgumentParser(description='AIxBlock')
-    # infrastructure args
-    parser.add_argument('--world_size', type=int, default=1, help="world_size")
-    parser.add_argument('--master_addr', type=str, default="0.0.0.0", help="master_addr")
-    parser.add_argument('--master_port', type=str, default="23456", help="master_port")
-    parser.add_argument('--rank', type=str, default=0, help="rank")
-    parser.add_argument('--backend', type=str, default="nccl", help="JSON string for backend")
-    # model args
-    parser.add_argument('--hf_model_id', type=str, default=None, help="hf_model_id")
-    parser.add_argument('--dataset_local', type=str, default=None, help="dataset id")
-    parser.add_argument('--training_args_json', type=str, default=None, help="JSON string for training arguments")
-    parser.add_argument('--predict_args', type=str, default="predict_args.json", help="predict_args")
-    parser.add_argument('--hf_token', type=str, default=None, help="hf_token")
-    parser.add_argument('--push_to_hub', type=str, default=None, help="push_to_hub")
-    parser.add_argument('--push_to_hub_token', type=str, default=None, help="push_to_hub_token")
-    # custom args
-    parser.add_argument('--action', type=str, default=None, help="/action, command field")
-    parser.add_argument('--channel_log', type=str, default=None, help="channel_log")
+        gc.collect()
+        torch.cuda.empty_cache()
 
-    # Phân tích các tham số dòng lệnh
-    args = parser.parse_args()
+        # Move model to CPU
+        model.to("cpu")
 
-    if args.channel_log:
-        log_queue, logging_thread = start_queue(args.channel_log)
-        write_log(log_queue)
+        # Cập nhật lại args nếu cần (ví dụ bạn có logic chọn fp16 / bf16)
+        training_arguments.fp16 = False
+        training_arguments.bf16 = False
+        training_arguments.no_cuda = True
 
-    return args
+        trainer = SFTTrainer(
+            model=model,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            args=training_arguments,
+        )
 
+        trainer.train()
+    else:
+        raise
 
-def main(args):
-    if args.action == "predict":
-        run_predict(args)
-    elif args.action == "train":
-        run_train(args)
+trainer.push_to_hub()
 
+output_dir = os.path.join("./data/checkpoint", hf_model_id.split("/")[-1])
+trainer.save_model(output_dir)
 
-if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+try:
+    from huggingface_hub import whoami, ModelCard, ModelCardData, upload_file
+
+    user = whoami(token=push_to_hub_token)["name"]
+    repo_id = f"{user}/{hf_model_id}"
+    logger.info(f"repo_id: {repo_id}")
+    card = ModelCard.load(repo_id)
+    sections = card.text.split("## ")
+
+    new_sections = []
+    for section in sections:
+        if section.lower().startswith("citations"):
+            new_section = (
+                "Citations\n\n"
+                "This model was fine-tuned by **AIxBlock**.\n\n"
+                "It was trained using a proprietary training workflow from **AIxBlock**, "
+                "a project under the ownership of the company.\n\n"
+                "© 2025 AIxBlock. All rights reserved.\n"
+            )
+            new_sections.append(new_section)
+        else:
+            new_sections.append(section)
+
+    card.text = "## ".join(new_sections)
+
+    readme_path = "README.md"
+    with open(readme_path, "w") as f:
+        f.write(card.text)
+
+    upload_file(
+        path_or_fileobj=readme_path,
+        path_in_repo="README.md",
+        repo_id=repo_id,
+        token=push_to_hub_token,
+        commit_message="Update citation to AIxBlock format",
+    )
+
+    logger.info("✅ README.md đã được cập nhật.")
+
+except Exception as e:
+    logger.info(f"Fail {e}")
+# free the memory again
+del model
+del trainer
+torch.cuda.empty_cache()
