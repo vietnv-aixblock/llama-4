@@ -94,7 +94,9 @@ else:
     compute_dtype = torch.float16
     attn_implementation = "sdpa"
 torch.set_grad_enabled(True)
-model_name = args.model_id if args.model_id else "meta-llama/Llama-Guard-4-12B"
+model_name = (
+    args.model_id if args.model_id else "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Using device: {device}")
@@ -106,7 +108,7 @@ tokenizer = AutoTokenizer.from_pretrained(
     trust_remote_code=True,
 )
 EOS_TOKEN = tokenizer.eos_token  # Must add EOS_TOKEN
-tokenizer.pad_token = tokenizer.eos_token  # Must add EOS_TOKEN
+# tokenizer.pad_token = tokenizer.eos_token  # Must add EOS_TOKEN
 alpaca_prompt = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
                     ### Instruction:
@@ -245,7 +247,7 @@ training_arguments = TrainingArguments(
     learning_rate=1e-4,
     # fp16 = not torch.cuda.is_bf16_supported(),
     # bf16 = torch.cuda.is_bf16_supported(),
-    eval_steps=30,
+    eval_steps=100,
     num_train_epochs=num_train_epochs,
     warmup_ratio=0.1,
     lr_scheduler_type="linear",

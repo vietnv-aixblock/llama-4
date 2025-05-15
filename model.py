@@ -77,13 +77,17 @@ class MyModel(AIxBlockMLBase):
 
         elif command.lower() == "train":
 
-            model_id = kwargs.get("model_id", "meta-llama/Llama-Guard-4-12B")
+            model_id = kwargs.get(
+                "model_id", "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+            )
             dataset_id = kwargs.get(
                 "dataset_id", "autoprogrammer/Qwen2.5-Coder-7B-Instruct-codeguardplus"
             )
 
             push_to_hub = kwargs.get("push_to_hub", True)
-            hf_model_id = kwargs.get("hf_model_id", "meta-llama/Llama-Guard-4-12B")
+            hf_model_id = kwargs.get(
+                "hf_model_id", "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+            )
             push_to_hub_token = kwargs.get(
                 "push_to_hub_token", "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"
             )
@@ -511,7 +515,7 @@ class MyModel(AIxBlockMLBase):
 
         elif command.lower() == "predict":
             prompt = kwargs.get("prompt", None)
-            model_id = kwargs.get("model_id", "meta-llama/Llama-Guard-4-12B")
+            model_id = kwargs.get("model_id", "meta-llama/Llama-4-Scout-17B-16E-Instruct")
             text = kwargs.get("text", None)
             token_length = kwargs.get("token_lenght", 30)
             task = kwargs.get("task", "")
@@ -674,7 +678,9 @@ class MyModel(AIxBlockMLBase):
     def model(self, **kwargs):
         global model_demo, tokenizer_demo, model_loaded_demo, model_id_demo
 
-        model_id_demo = kwargs.get("model_id", "meta-llama/Llama-Guard-4-12B")
+        model_id_demo = kwargs.get(
+            "model_id", "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+        )
         project_id = kwargs.get("project_id", 0)
 
         print(
