@@ -11,7 +11,7 @@ from huggingface_hub.hf_api import HfFolder
 from loguru import logger
 from peft import LoraConfig
 from transformers import (
-    AutoModelForCausalLM,
+    Llama4ForConditionalGeneration,
     AutoTokenizer,
     BitsAndBytesConfig,
     TrainingArguments,
@@ -213,15 +213,16 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True,
 )
 
-model = AutoModelForCausalLM.from_pretrained(
+model = Llama4ForConditionalGeneration.from_pretrained(
     model_name,
-    trust_remote_code=True,
     device_map="auto",
+    torch_dtype=torch.bfloat16,
     quantization_config=bnb_config,
-    torch_dtype=compute_dtype,
+    trust_remote_code=True,
 )
+model.config.use_cache = False
+model.config.pretraining_tp = 1
 
-model.enable_input_require_grads()
 
 # Configure LoRA for Qwen model
 peft_config = LoraConfig(
